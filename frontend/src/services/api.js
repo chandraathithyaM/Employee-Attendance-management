@@ -1,68 +1,87 @@
-import axios from 'axios';
+import axios from "axios";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL;
 
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
-    'Content-Type': 'application/json',
+    "Content-Type": "application/json",
   },
 });
 
-// Add auth token to every request
+// Attach JWT
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
+  const token = localStorage.getItem("token");
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
 });
 
-// Handle 401 responses
+// Handle unauthorized
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      window.location.href = '/';
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      window.location.href = "/";
     }
     return Promise.reject(error);
   }
 );
 
 // Auth
-export const googleLogin = (credential) => api.post('/api/auth/google', { credential });
-export const getCurrentUser = () => api.get('/auth/me');
+export const googleLogin = (credential) =>
+  api.post("/api/auth/google", { credential });
 
-// Admin APIs
-export const getAllUsers = () => api.get('/admin/users');
-export const getUsersByRole = (role) => api.get(`/admin/users/role/${role}`);
-export const createUser = (data) => api.post('/admin/users', data);
-export const updateUser = (id, data) => api.put(`/admin/users/${id}`, data);
-export const deleteUser = (id) => api.delete(`/admin/users/${id}`);
-export const getAdminProfile = () => api.get('/admin/profile');
-export const getAllAdminLeaves = () => api.get('/admin/leaves');
+export const getCurrentUser = () => api.get("/api/auth/me");
 
-// Manager APIs
-export const getEmployees = () => api.get('/manager/employees');
-export const createEmployee = (data) => api.post('/manager/employees', data);
-export const updateEmployee = (id, data) => api.put(`/manager/employees/${id}`, data);
-export const deleteEmployee = (id) => api.delete(`/manager/employees/${id}`);
-export const generateOtp = (data) => api.post('/manager/attendance/generate-otp', data);
-export const generateQrCode = (data) => api.post('/manager/attendance/qr', data);
+// Admin
+export const getAllUsers = () => api.get("/api/admin/users");
+export const getUsersByRole = (role) => api.get(`/api/admin/users/role/${role}`);
+export const createUser = (data) => api.post("/api/admin/users", data);
+export const updateUser = (id, data) => api.put(`/api/admin/users/${id}`, data);
+export const deleteUser = (id) => api.delete(`/api/admin/users/${id}`);
+export const getAdminProfile = () => api.get("/api/admin/profile");
+export const getAllAdminLeaves = () => api.get("/api/admin/leaves");
 
-export const getEmployeeAttendance = (id) => api.get(`/manager/attendance/${id}`);
-export const getManagerProfile = () => api.get('/manager/profile');
-export const getManagerLeaves = () => api.get('/manager/leaves');
-export const updateLeaveStatus = (id, status, comment = '') =>
-  api.put(`/manager/leaves/${id}?status=${status}&comment=${encodeURIComponent(comment)}`);
+// Manager
+export const getEmployees = () => api.get("/api/manager/employees");
+export const createEmployee = (data) => api.post("/api/manager/employees", data);
+export const updateEmployee = (id, data) =>
+  api.put(`/api/manager/employees/${id}`, data);
+export const deleteEmployee = (id) =>
+  api.delete(`/api/manager/employees/${id}`);
 
-// Employee APIs
-export const getProfile = () => api.get('/employee/profile');
-export const getMyAttendance = () => api.get('/employee/attendance');
-export const markMyAttendance = (data) => api.post('/employee/attendance/mark', data);
-export const applyLeave = (data) => api.post('/employee/leave', data);
-export const getMyLeaves = () => api.get('/employee/leave');
+export const generateOtp = (data) =>
+  api.post("/api/manager/attendance/generate-otp", data);
+
+export const generateQrCode = (data) =>
+  api.post("/api/manager/attendance/qr", data);
+
+export const getEmployeeAttendance = (id) =>
+  api.get(`/api/manager/attendance/${id}`);
+
+export const getManagerProfile = () => api.get("/api/manager/profile");
+export const getManagerLeaves = () => api.get("/api/manager/leaves");
+
+export const updateLeaveStatus = (id, status, comment = "") =>
+  api.put(
+    `/api/manager/leaves/${id}?status=${status}&comment=${encodeURIComponent(
+      comment
+    )}`
+  );
+
+// Employee
+export const getProfile = () => api.get("/api/employee/profile");
+export const getMyAttendance = () => api.get("/api/employee/attendance");
+export const markMyAttendance = (data) =>
+  api.post("/api/employee/attendance/mark", data);
+
+export const applyLeave = (data) =>
+  api.post("/api/employee/leave", data);
+
+export const getMyLeaves = () => api.get("/api/employee/leave");
 
 export default api;
