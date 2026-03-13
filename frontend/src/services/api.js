@@ -32,7 +32,7 @@ api.interceptors.response.use(
 );
 
 // Auth
-export const googleLogin = (credential) => api.post('/auth/google', { credential });
+export const googleLogin = (credential) => api.post('/api/auth/google', { credential });
 export const getCurrentUser = () => api.get('/auth/me');
 
 // Admin APIs
