@@ -66,32 +66,60 @@ const EmployeeDashboard = () => {
             return;
         }
 
-        navigator.geolocation.getCurrentPosition(
-            async (position) => {
-                try {
-                    await markMyAttendance({
-                        otp: otpInput,
-                        status: 'PRESENT',
-                        latitude: position.coords.latitude,
-                        longitude: position.coords.longitude
-                    });
-                    setAttendanceMsg({ type: 'success', text: 'Attendance marked successfully!' });
-                    setOtpInput('');
-                    fetchData();
-                } catch (err) {
-                    setAttendanceMsg({ 
-                        type: 'error', 
-                        text: err.response?.data?.error || 'Failed to mark attendance. OTP may be invalid or expired.' 
-                    });
-                } finally {
-                    setMarkingAttendance(false);
-                }
-            },
-            (error) => {
-                setAttendanceMsg({ type: 'error', text: 'Please allow location access to mark attendance' });
+      navigator.geolocation.getCurrentPosition(
+    async (position) => {
+        try {
+
+            const { latitude, longitude, accuracy } = position.coords;
+
+            console.log("Employee location:", latitude, longitude, "Accuracy:", accuracy);
+
+            if (accuracy > 100) {
+                setAttendanceMsg({
+                    type: 'error',
+                    text: 'Location accuracy too low. Please enable GPS.'
+                });
                 setMarkingAttendance(false);
+                return;
             }
-        );
+
+            await markMyAttendance({
+                otp: otpInput,
+                status: 'PRESENT',
+                latitude,
+                longitude
+            });
+
+            setAttendanceMsg({
+                type: 'success',
+                text: 'Attendance marked successfully!'
+            });
+
+            setOtpInput('');
+            fetchData();
+
+        } catch (err) {
+            setAttendanceMsg({
+                type: 'error',
+                text: err.response?.data?.error || 'Failed to mark attendance'
+            });
+        } finally {
+            setMarkingAttendance(false);
+        }
+    },
+    (error) => {
+        setAttendanceMsg({
+            type: 'error',
+            text: 'Please allow location access to mark attendance'
+        });
+        setMarkingAttendance(false);
+    },
+    {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0
+    }
+);
     };
 
     const presentDays = attendance.filter(a => a.status === 'PRESENT').length;
