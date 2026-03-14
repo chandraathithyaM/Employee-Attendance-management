@@ -51,7 +51,7 @@ public class OtpService {
             if (otpRecord.getLatitude() != null && otpRecord.getLongitude() != null &&
                 empLat != null && empLon != null) {
                 double distance = calculateDistance(otpRecord.getLatitude(), otpRecord.getLongitude(), empLat, empLon);
-                if (distance > 110.0) {
+                if (distance > 51.0) {
                     throw new RuntimeException("You are too far from your manager (must be within 50 meters). Distance: " + Math.round(distance) + "m");
                 }
             } else if (empLat == null || empLon == null) {
