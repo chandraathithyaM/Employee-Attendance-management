@@ -67,28 +67,46 @@ const AttendanceOtp = () => {
         return () => clearTimeout(timerRef.current);
     }, [timeLeft, otp, qrCodeData]);
 
-    const buildPayload = useCallback((position) => {
-        const payload = { verificationMode };
-        if (verificationMode === 'LOCATION' && position) {
-            payload.latitude = position.coords.latitude;
-            payload.longitude = position.coords.longitude;
-        }
-        // WiFi mode no longer needs manual SSID entry
-        return payload;
-    }, [verificationMode]);
+       navigator.geolocation.getCurrentPosition(
+    async (position) => {
+        try {
+            const { latitude, longitude, accuracy } = position.coords;
 
-    const getLocation = () => {
-        return new Promise((resolve, reject) => {
-            if (!navigator.geolocation) {
-                reject(new Error('Geolocation is not supported'));
+            console.log("Manager location:", latitude, longitude, "Accuracy:", accuracy);
+
+            if (accuracy > 100) {
+                setMessage({
+                    type: 'error',
+                    text: 'Location accuracy too low. Please enable GPS.'
+                });
+                setGenerating(false);
                 return;
             }
-            navigator.geolocation.getCurrentPosition(resolve, reject, {
-                enableHighAccuracy: true,
-                maximumAge: 0,
-                timeout: 15000,
+
+            const res = await generateOtp({
+                latitude,
+                longitude
             });
-        });
+
+            setOtp(res.data.otp);
+            setOtpExpiry(res.data.expiresAt);
+
+        } catch (err) {
+            setMessage({ type: 'error', text: 'Failed to generate OTP' });
+        } finally {
+            setGenerating(false);
+        }
+    },
+    (error) => {
+        setMessage({ type: 'error', text: 'Please allow location access to generate OTP' });
+        setGenerating(false);
+    },
+    {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0
+    }
+);
     };
 
     const handleGenerate = async (type) => {

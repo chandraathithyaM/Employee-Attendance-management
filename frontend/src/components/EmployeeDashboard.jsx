@@ -118,45 +118,60 @@ const EmployeeDashboard = () => {
                 verificationMode: attendanceMode,
             };
 
-            if (attendanceMode === 'LOCATION') {
-                setAttendanceMsg({ type: 'info', text: 'Acquiring precise location...' });
-                const position = await new Promise((resolve, reject) => {
-                    navigator.geolocation.getCurrentPosition(resolve, reject, {
-                        enableHighAccuracy: true,
-                        maximumAge: 0,
-                        timeout: 10000,
-                    });
+      navigator.geolocation.getCurrentPosition(
+    async (position) => {
+        try {
+
+            const { latitude, longitude, accuracy } = position.coords;
+
+            console.log("Employee location:", latitude, longitude, "Accuracy:", accuracy);
+
+            if (accuracy > 100) {
+                setAttendanceMsg({
+                    type: 'error',
+                    text: 'Location accuracy too low. Please enable GPS.'
                 });
-                payload.latitude = position.coords.latitude;
-                payload.longitude = position.coords.longitude;
+                setMarkingAttendance(false);
+                return;
             }
 
-            // WIFI mode is now automatic via IP on backend
+            await markMyAttendance({
+                otp: otpInput,
+                status: 'PRESENT',
+                latitude,
+                longitude
+            });
 
-            if (attendanceMode === 'ULTRASONIC') {
-                setAttendanceMsg({ type: 'info', text: '📡 Starting to listen for ultrasonic signal...' });
-                let token = await startListening();
-                if (!token) {
-                    setAttendanceMsg({ type: 'error', text: 'Failed to capture ultrasonic signal. Please try again.' });
-                    setMarkingAttendance(false);
-                    return;
-                }
-                payload.ultrasonicToken = token;
-            }
+            setAttendanceMsg({
+                type: 'success',
+                text: 'Attendance marked successfully!'
+            });
 
-            await markMyAttendance(payload);
-            setAttendanceMsg({ type: 'success', text: '✅ Attendance marked successfully!' });
             setOtpInput('');
-            setCapturedToken('');
             fetchData();
+
         } catch (err) {
             setAttendanceMsg({
                 type: 'error',
-                text: err.response?.data?.error || err.message || 'Failed to mark attendance.'
+                text: err.response?.data?.error || 'Failed to mark attendance'
             });
         } finally {
             setMarkingAttendance(false);
         }
+    },
+    (error) => {
+        setAttendanceMsg({
+            type: 'error',
+            text: 'Please allow location access to mark attendance'
+        });
+        setMarkingAttendance(false);
+    },
+    {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0
+    }
+);
     };
 
     const startListening = () => {

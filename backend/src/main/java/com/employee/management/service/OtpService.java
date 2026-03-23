@@ -52,24 +52,16 @@ public class OtpService {
         Optional<OtpRecord> record = otpRepository.findByOtpAndUsedFalse(otp);
         if (record.isPresent() && record.get().getExpiresAt().isAfter(LocalDateTime.now())) {
             OtpRecord otpRecord = record.get();
-            VerificationMode mode = otpRecord.getVerificationMode();
-            if (mode == null) mode = VerificationMode.LOCATION;
-
-            switch (mode) {
-                case LOCATION:
-                    verifyLocation(otpRecord, empLat, empLon);
-                    break;
-
-                case WIFI:
-                    verifyNetwork(otpRecord, empNetworkId);
-                    break;
-
-                case ULTRASONIC:
-                    verifyUltrasonic(otpRecord, empUltrasonicToken);
-                    break;
-
-                default:
-                    throw new RuntimeException("Unknown verification mode: " + mode);
+            
+            // Check distance if both manager and employee provided location
+            if (otpRecord.getLatitude() != null && otpRecord.getLongitude() != null &&
+                empLat != null && empLon != null) {
+                double distance = calculateDistance(otpRecord.getLatitude(), otpRecord.getLongitude(), empLat, empLon);
+                if (distance > 51.0) {
+                    throw new RuntimeException("You are too far from your manager (must be within 50 meters). Distance: " + Math.round(distance) + "m");
+                }
+            } else if (empLat == null || empLon == null) {
+                throw new RuntimeException("Employee location is required to mark attendance.");
             }
 
             otpRecord.setUsed(true);
