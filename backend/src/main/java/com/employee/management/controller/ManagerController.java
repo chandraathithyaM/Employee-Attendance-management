@@ -2,9 +2,11 @@ package com.employee.management.controller;
 
 import com.employee.management.dto.AttendanceRequest;
 import com.employee.management.dto.CreateUserRequest;
+import com.employee.management.dto.LeaveResponse;
 import com.employee.management.dto.LocationRequest;
 import com.employee.management.model.*;
 import com.employee.management.service.*;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -23,6 +25,7 @@ public class ManagerController {
     private final AttendanceService attendanceService;
     private final LeaveService leaveService;
     private final QrCodeService qrCodeService;
+    private final UltrasonicService ultrasonicService;
 
     // ── Profile ──────────────────────────────────────────────────────────────
 
@@ -70,30 +73,70 @@ public class ManagerController {
     // ── Attendance OTP & QR ───────────────────────────────────────────────────
 
     @PostMapping("/attendance/generate-otp")
-    public ResponseEntity<?> generateOtp(@RequestBody LocationRequest location, Authentication authentication) {
+    public ResponseEntity<?> generateOtp(@RequestBody LocationRequest location, Authentication authentication, HttpServletRequest request) {
         String email = (String) authentication.getPrincipal();
         User manager = userService.findByEmail(email).orElseThrow();
-        OtpRecord otpRecord = otpService.generateOtp(manager.getId(), location.getLatitude(), location.getLongitude());
-        return ResponseEntity.ok(Map.of(
-                "otp", otpRecord.getOtp(),
-                "expiresAt", otpRecord.getExpiresAt().toString()
-        ));
+
+        VerificationMode mode = parseMode(location.getVerificationMode());
+        String ultrasonicToken = null;
+
+        // If ultrasonic mode, generate a token
+        if (mode == VerificationMode.ULTRASONIC) {
+            ultrasonicToken = ultrasonicService.generateToken();
+        }
+
+        OtpRecord otpRecord = otpService.generateOtp(
+                manager.getId(),
+                location.getLatitude(),
+                location.getLongitude(),
+                mode,
+                getClientIp(request), // Auto IP
+                ultrasonicToken
+        );
+
+        var response = new java.util.HashMap<String, Object>();
+        response.put("otp", otpRecord.getOtp());
+        response.put("expiresAt", otpRecord.getExpiresAt().toString());
+        response.put("verificationMode", mode.name());
+        if (ultrasonicToken != null) {
+            response.put("ultrasonicToken", ultrasonicToken);
+        }
+
+        return ResponseEntity.ok(response);
     }
 
     @PostMapping("/attendance/qr")
-    public ResponseEntity<?> generateQrCode(@RequestBody LocationRequest location, Authentication authentication) {
+    public ResponseEntity<?> generateQrCode(@RequestBody LocationRequest location, Authentication authentication, HttpServletRequest request) {
         String email = (String) authentication.getPrincipal();
         User manager = userService.findByEmail(email).orElseThrow();
-        OtpRecord otpRecord = otpService.generateOtp(manager.getId(), location.getLatitude(), location.getLongitude());
+
+        VerificationMode mode = parseMode(location.getVerificationMode());
+        String ultrasonicToken = null;
+        if (mode == VerificationMode.ULTRASONIC) {
+            ultrasonicToken = ultrasonicService.generateToken();
+        }
+
+        OtpRecord otpRecord = otpService.generateOtp(
+                manager.getId(),
+                location.getLatitude(),
+                location.getLongitude(),
+                mode,
+                getClientIp(request), // Auto IP
+                ultrasonicToken
+        );
         String qrBase64 = qrCodeService.generateQrCodeBase64(otpRecord.getOtp());
-        return ResponseEntity.ok(Map.of(
-                "qrCode", qrBase64,
-                "otp", otpRecord.getOtp(),
-                "expiresAt", otpRecord.getExpiresAt().toString()
-        ));
+
+        var response = new java.util.HashMap<String, Object>();
+        response.put("qrCode", qrBase64);
+        response.put("otp", otpRecord.getOtp());
+        response.put("expiresAt", otpRecord.getExpiresAt().toString());
+        response.put("verificationMode", mode.name());
+        if (ultrasonicToken != null) {
+            response.put("ultrasonicToken", ultrasonicToken);
+        }
+
+        return ResponseEntity.ok(response);
     }
-
-
 
     @GetMapping("/attendance/{employeeId}")
     public ResponseEntity<List<Attendance>> getEmployeeAttendance(@PathVariable Long employeeId) {
@@ -103,7 +146,7 @@ public class ManagerController {
     // ── Leave Management ──────────────────────────────────────────────────────
 
     @GetMapping("/leaves")
-    public ResponseEntity<List<Leave>> getAllLeaves() {
+    public ResponseEntity<List<LeaveResponse>> getAllLeaves() {
         return ResponseEntity.ok(leaveService.getAllLeaves());
     }
 
@@ -116,5 +159,32 @@ public class ManagerController {
         String email = (String) authentication.getPrincipal();
         User manager = userService.findByEmail(email).orElseThrow();
         return ResponseEntity.ok(leaveService.updateLeaveStatus(id, status, manager.getId(), comment));
+    }
+
+    private VerificationMode parseMode(String mode) {
+        if (mode == null || mode.isEmpty()) return VerificationMode.LOCATION;
+        try {
+            return VerificationMode.valueOf(mode.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return VerificationMode.LOCATION;
+        }
+    }
+
+    private String getClientIp(HttpServletRequest request) {
+        String ip = request.getHeader("X-Forwarded-For");
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getHeader("Proxy-Client-IP");
+        }
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getHeader("WL-Proxy-Client-IP");
+        }
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getRemoteAddr();
+        }
+        // If multiple IPs are present in X-Forwarded-For, take the first one
+        if (ip != null && ip.contains(",")) {
+            ip = ip.split(",")[0].trim();
+        }
+        return ip;
     }
 }

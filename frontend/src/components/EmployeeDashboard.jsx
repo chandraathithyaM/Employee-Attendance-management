@@ -1,10 +1,46 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
     FaUserCircle, FaCalendarCheck, FaEnvelope, FaPhone,
-    FaBuilding, FaCalendar, FaUmbrellaBeach, FaPlus, FaClock, FaCheck
+    FaBuilding, FaCalendar, FaUmbrellaBeach, FaPlus, FaClock, FaCheck,
+    FaMapMarkerAlt, FaWifi, FaVolumeUp, FaMicrophone, FaStop
 } from 'react-icons/fa';
 import { getProfile, getMyAttendance, getMyLeaves, markMyAttendance } from '../services/api';
 import LeaveForm from './LeaveForm';
+
+// ── Ultrasonic Decoder (Updated Range: 16.5–18.5 kHz) ───────────────────────
+const ULTRASONIC_BASE_FREQ = 16500;
+const ULTRASONIC_FREQ_STEP = 50; 
+const ULTRASONIC_BIT_DURATION = 0.15;
+const TOKEN_LENGTH = 8;
+
+function findPeakFrequency(analyser, sampleRate) {
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Float32Array(bufferLength);
+    analyser.getFloatFrequencyData(dataArray);
+
+    const minBin = Math.floor(ULTRASONIC_BASE_FREQ / (sampleRate / bufferLength));
+    const maxBin = Math.ceil((ULTRASONIC_BASE_FREQ + 40 * ULTRASONIC_FREQ_STEP + 200) / (sampleRate / bufferLength));
+
+    let maxVal = -Infinity;
+    let maxIdx = minBin;
+    for (let i = minBin; i <= maxBin && i < bufferLength; i++) {
+        if (dataArray[i] > maxVal) {
+            maxVal = dataArray[i];
+            maxIdx = i;
+        }
+    }
+
+    if (maxVal < -60) return null; 
+    return (maxIdx * sampleRate) / bufferLength;
+}
+
+function freqToChar(freq) {
+    const offset = Math.round((freq - ULTRASONIC_BASE_FREQ) / ULTRASONIC_FREQ_STEP);
+    for (let c = 32; c < 127; c++) {
+        if (c % 40 === offset) return String.fromCharCode(c);
+    }
+    return null;
+}
 
 const statusColors = {
     PRESENT: 'status-present',
@@ -26,14 +62,29 @@ const EmployeeDashboard = () => {
     const [error, setError] = useState('');
     const [activeTab, setActiveTab] = useState('profile');
     const [showLeaveForm, setShowLeaveForm] = useState(false);
-    
-    // New state for self-marking attendance
+
+    // Attendance marking state
     const [otpInput, setOtpInput] = useState('');
     const [markingAttendance, setMarkingAttendance] = useState(false);
     const [attendanceMsg, setAttendanceMsg] = useState(null);
+    const [attendanceMode, setAttendanceMode] = useState('LOCATION');
+
+    const VERIFICATION_MODES = [
+        { id: 'LOCATION', label: 'Location', icon: <FaMapMarkerAlt />, desc: 'GPS-proximity check (50m)' },
+        { id: 'WIFI', label: 'WiFi', icon: <FaWifi />, desc: 'Same Public IP verification' },
+        { id: 'ULTRASONIC', label: 'Ultrasonic', icon: <FaVolumeUp />, desc: 'Secure sound-based check' },
+    ];
+
+    // Ultrasonic listening state
+    const [isListening, setIsListening] = useState(false);
+    const [capturedToken, setCapturedToken] = useState('');
+    const [listeningProgress, setListeningProgress] = useState(0);
+    const audioCtxRef = useRef(null);
+    const streamRef = useRef(null);
+    const analyserRef = useRef(null);
+    const animFrameRef = useRef(null);
 
     useEffect(() => {
-
         fetchData();
     }, []);
 
@@ -58,163 +109,162 @@ const EmployeeDashboard = () => {
     const handleMarkAttendance = async () => {
         if (!otpInput) return;
         setMarkingAttendance(true);
-        setAttendanceMsg({ type: 'info', text: 'Acquiring location...' });
+        setAttendanceMsg({ type: 'info', text: 'Processing...' });
 
-        if (!navigator.geolocation) {
-            setAttendanceMsg({ type: 'error', text: 'Geolocation is not supported by your browser' });
-            setMarkingAttendance(false);
-            return;
-        }
+        try {
+            const payload = {
+                otp: otpInput,
+                status: 'PRESENT',
+                verificationMode: attendanceMode,
+            };
 
-        navigator.geolocation.getCurrentPosition(
-            async (position) => {
-                try {
-                    await markMyAttendance({
-                        otp: otpInput,
-                        status: 'PRESENT',
-                        latitude: position.coords.latitude,
-                        longitude: position.coords.longitude
+            if (attendanceMode === 'LOCATION') {
+                setAttendanceMsg({ type: 'info', text: 'Acquiring precise location...' });
+                const position = await new Promise((resolve, reject) => {
+                    navigator.geolocation.getCurrentPosition(resolve, reject, {
+                        enableHighAccuracy: true,
+                        maximumAge: 0,
+                        timeout: 10000,
                     });
-                    setAttendanceMsg({ type: 'success', text: 'Attendance marked successfully!' });
-                    setOtpInput('');
-                    fetchData();
-                } catch (err) {
-                    setAttendanceMsg({ 
-                        type: 'error', 
-                        text: err.response?.data?.error || 'Failed to mark attendance. OTP may be invalid or expired.' 
-                    });
-                } finally {
-                    setMarkingAttendance(false);
-                }
-            },
-            (error) => {
-                setAttendanceMsg({ type: 'error', text: 'Please allow location access to mark attendance' });
-                setMarkingAttendance(false);
+                });
+                payload.latitude = position.coords.latitude;
+                payload.longitude = position.coords.longitude;
             }
-        );
+
+            // WIFI mode is now automatic via IP on backend
+
+            if (attendanceMode === 'ULTRASONIC') {
+                setAttendanceMsg({ type: 'info', text: '📡 Starting to listen for ultrasonic signal...' });
+                let token = await startListening();
+                if (!token) {
+                    setAttendanceMsg({ type: 'error', text: 'Failed to capture ultrasonic signal. Please try again.' });
+                    setMarkingAttendance(false);
+                    return;
+                }
+                payload.ultrasonicToken = token;
+            }
+
+            await markMyAttendance(payload);
+            setAttendanceMsg({ type: 'success', text: '✅ Attendance marked successfully!' });
+            setOtpInput('');
+            setCapturedToken('');
+            fetchData();
+        } catch (err) {
+            setAttendanceMsg({
+                type: 'error',
+                text: err.response?.data?.error || err.message || 'Failed to mark attendance.'
+            });
+        } finally {
+            setMarkingAttendance(false);
+        }
     };
 
-    const presentDays = attendance.filter(a => a.status === 'PRESENT').length;
-    const absentDays = attendance.filter(a => a.status === 'ABSENT').length;
-    const attendanceRate = attendance.length > 0
-        ? Math.round((presentDays / attendance.length) * 100)
-        : 0;
+    const startListening = () => {
+        return new Promise(async (resolve) => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                streamRef.current = stream;
 
-    const pendingLeaves = leaves.filter(l => l.status === 'PENDING').length;
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                audioCtxRef.current = audioCtx;
 
-    if (loading) {
-        return (
-            <div className="dashboard">
-                <div className="loading-state">
-                    <div className="spinner"></div>
-                    <p>Loading your profile...</p>
-                </div>
-            </div>
-        );
-    }
+                const source = audioCtx.createMediaStreamSource(stream);
+                const analyser = audioCtx.createAnalyser();
+                analyser.fftSize = 8192;
+                source.connect(analyser);
+                analyserRef.current = analyser;
 
-    const tabs = [
-        { id: 'profile', label: 'Profile', icon: <FaUserCircle /> },
-        { id: 'attendance', label: 'Attendance', icon: <FaCalendarCheck /> },
-        { id: 'leave', label: 'Leave', icon: <FaUmbrellaBeach /> },
-    ];
+                setIsListening(true);
+                setCapturedToken('');
+                setListeningProgress(0);
+
+                let chars = [];
+                let sampleCount = 0;
+                const samplesPerChar = Math.ceil((ULTRASONIC_BIT_DURATION * 1000) / 50);
+
+                const listen = () => {
+                    if (!audioCtxRef.current) {
+                        resolve(null);
+                        return;
+                    }
+
+                    const freq = findPeakFrequency(analyser, audioCtx.sampleRate);
+                    if (freq) {
+                        sampleCount++;
+                        if (sampleCount >= samplesPerChar) {
+                            const char = freqToChar(freq);
+                            if (char) {
+                                chars.push(char);
+                                setListeningProgress(Math.min(100, (chars.length / TOKEN_LENGTH) * 100));
+                                if (chars.length >= TOKEN_LENGTH) {
+                                    const token = chars.slice(0, TOKEN_LENGTH).join('');
+                                    setCapturedToken(token);
+                                    stopListening();
+                                    setAttendanceMsg({ type: 'success', text: `Captured signal: ${token}` });
+                                    resolve(token);
+                                    return;
+                                }
+                            }
+                            sampleCount = 0;
+                        }
+                    }
+                    animFrameRef.current = setTimeout(() => listen(), 50);
+                };
+
+                listen();
+
+                // Timeout after 30 seconds if nothing captured
+                setTimeout(() => {
+                    if (isListening) {
+                        stopListening();
+                        resolve(null);
+                    }
+                }, 30000);
+
+            } catch (e) {
+                setAttendanceMsg({ type: 'error', text: 'Microphone access is required.' });
+                resolve(null);
+            }
+        });
+    };
+
+    const stopListening = () => {
+        if (animFrameRef.current) clearTimeout(animFrameRef.current);
+        if (streamRef.current) {
+            streamRef.current.getTracks().forEach(t => t.stop());
+        }
+        if (audioCtxRef.current) {
+            audioCtxRef.current.close();
+        }
+        audioCtxRef.current = null;
+        streamRef.current = null;
+        analyserRef.current = null;
+        setIsListening(false);
+    };
+
+    if (loading) return <div className="dashboard"><div className="loading-state"><div className="spinner"></div></div></div>;
 
     return (
         <div className="dashboard">
             <div className="dashboard-header">
                 <h1>My Dashboard</h1>
                 <div className="header-actions">
-                    {tabs.map(tab => (
-                        <button
-                            key={tab.id}
-                            className={`btn ${activeTab === tab.id ? 'btn-primary' : 'btn-secondary'}`}
-                            onClick={() => setActiveTab(tab.id)}
-                        >
-                            {tab.icon} {tab.label}
-                        </button>
-                    ))}
+                    <button className={`btn ${activeTab === 'profile' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setActiveTab('profile')}><FaUserCircle /> <span>Profile</span></button>
+                    <button className={`btn ${activeTab === 'attendance' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setActiveTab('attendance')}><FaCalendarCheck /> <span>Attendance</span></button>
+                    <button className={`btn ${activeTab === 'leave' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setActiveTab('leave')}><FaUmbrellaBeach /> <span>Leave</span></button>
                 </div>
             </div>
-
-            {error && <div className="alert alert-error">{error}</div>}
 
             {activeTab === 'profile' && (
                 <div className="profile-section">
                     <div className="profile-card-large">
                         <div className="profile-header-section">
-                            {profile?.profilePicture ? (
-                                <img src={profile.profilePicture} alt="Profile" className="profile-avatar-lg" />
-                            ) : (
-                                <div className="profile-avatar-placeholder">
-                                    <FaUserCircle />
-                                </div>
-                            )}
-                            <div className="profile-name-section">
-                                <h2>{profile?.name}</h2>
-                                <span className="role-pill role-employee">{profile?.role}</span>
-                            </div>
+                            {profile?.profilePicture ? <img src={profile.profilePicture} alt="P" className="profile-avatar-lg" /> : <div className="profile-avatar-placeholder"><FaUserCircle /></div>}
+                            <div className="profile-name-section"><h2>{profile?.name}</h2><span className="role-pill role-employee">{profile?.role}</span></div>
                         </div>
-
                         <div className="profile-details-grid">
-                            <div className="detail-item">
-                                <FaEnvelope className="detail-icon" />
-                                <div>
-                                    <span className="detail-label">Email</span>
-                                    <span className="detail-value">{profile?.email}</span>
-                                </div>
-                            </div>
-                            <div className="detail-item">
-                                <FaBuilding className="detail-icon" />
-                                <div>
-                                    <span className="detail-label">Department</span>
-                                    <span className="detail-value">{profile?.department || 'Not assigned'}</span>
-                                </div>
-                            </div>
-                            <div className="detail-item">
-                                <FaPhone className="detail-icon" />
-                                <div>
-                                    <span className="detail-label">Phone</span>
-                                    <span className="detail-value">{profile?.phone || 'Not provided'}</span>
-                                </div>
-                            </div>
-                            <div className="detail-item">
-                                <FaCalendar className="detail-icon" />
-                                <div>
-                                    <span className="detail-label">Joining Date</span>
-                                    <span className="detail-value">{profile?.joiningDate || 'Not set'}</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="stats-grid">
-                        <div className="stat-card stat-total">
-                            <FaCalendarCheck className="stat-icon" />
-                            <div className="stat-info">
-                                <span className="stat-number">{attendance.length}</span>
-                                <span className="stat-label">Total Records</span>
-                            </div>
-                        </div>
-                        <div className="stat-card stat-employee">
-                            <FaCalendarCheck className="stat-icon" />
-                            <div className="stat-info">
-                                <span className="stat-number">{presentDays}</span>
-                                <span className="stat-label">Days Present</span>
-                            </div>
-                        </div>
-                        <div className="stat-card stat-admin">
-                            <FaCalendarCheck className="stat-icon" />
-                            <div className="stat-info">
-                                <span className="stat-number">{absentDays}</span>
-                                <span className="stat-label">Days Absent</span>
-                            </div>
-                        </div>
-                        <div className="stat-card stat-manager">
-                            <FaCalendarCheck className="stat-icon" />
-                            <div className="stat-info">
-                                <span className="stat-number">{attendanceRate}%</span>
-                                <span className="stat-label">Attendance Rate</span>
-                            </div>
+                            <div className="detail-item"><FaEnvelope className="detail-icon" /><div><span className="detail-label">Email</span><span className="detail-value">{profile?.email}</span></div></div>
+                            <div className="detail-item"><FaBuilding className="detail-icon" /><div><span className="detail-label">Department</span><span className="detail-value">{profile?.department}</span></div></div>
                         </div>
                     </div>
                 </div>
@@ -222,154 +272,53 @@ const EmployeeDashboard = () => {
 
             {activeTab === 'attendance' && (
                 <>
-                    <div className="attendance-card mark-card" style={{ marginBottom: 24, padding: 24, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
-                        <div className="card-header" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-                            <FaCheck className="card-icon" style={{ fontSize: 22, color: 'var(--accent)' }} />
-                            <h3 style={{ fontSize: 18, fontWeight: 600 }}>Mark My Attendance</h3>
-                        </div>
-                        <p className="card-desc" style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 20 }}>
-                            Enter the OTP provided by your manager to mark your attendance for today.
-                        </p>
-
-                        <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-                            <div className="form-group" style={{ margin: 0, flex: 1, minWidth: 200 }}>
-                                <input
-                                    type="text"
-                                    placeholder="Enter 6-digit OTP"
-                                    maxLength={6}
-                                    value={otpInput}
-                                    onChange={(e) => setOtpInput(e.target.value)}
-                                    className="otp-input"
-                                    style={{ textAlign: 'center', fontSize: 20, letterSpacing: 4, fontWeight: 600, padding: '12px', width: '100%', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
-                                />
+                    <div className="attendance-card mark-card">
+                        <div className="card-header"><FaCheck className="card-icon" /><h3>Mark My Attendance</h3></div>
+                        <div className="mode-selector" style={{ padding: '0 20px 20px' }}>
+                            <div className="mode-cards" style={{ gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+                                {VERIFICATION_MODES.map(mode => (
+                                    <button
+                                        key={mode.id}
+                                        className={`mode-card ${attendanceMode === mode.id ? 'active' : ''}`}
+                                        onClick={() => { setAttendanceMode(mode.id); setAttendanceMsg(null); }}
+                                        style={{ padding: '15px 10px' }}
+                                    >
+                                        <span className="mode-card-icon">{mode.icon}</span>
+                                        <span className="mode-card-label" style={{ fontSize: '0.9rem' }}>{mode.label}</span>
+                                        <span className="mode-card-desc" style={{ fontSize: '0.7rem' }}>{mode.desc}</span>
+                                    </button>
+                                ))}
                             </div>
-                            <button
-                                className="btn btn-primary"
-                                onClick={handleMarkAttendance}
-                                disabled={markingAttendance || !otpInput || otpInput.length < 6}
-                                style={{ padding: '12px 24px', height: '100%' }}
-                            >
-                                {markingAttendance ? 'Marking...' : 'Submit OTP'}
+                        </div>
+
+                        <div className="mark-form">
+                            <input type="text" placeholder="6-digit OTP" maxLength={6} value={otpInput} onChange={(e) => setOtpInput(e.target.value)} className="otp-input" />
+                            {isListening && (
+                                <div className="ultrasonic-listen-section" style={{ width: '100%', marginBottom: '15px' }}>
+                                    <div className="listening-indicator" style={{ background: 'rgba(99, 102, 241, 0.1)', padding: '10px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '15px' }}>
+                                        <div className="listening-pulse"></div>
+                                        <span style={{ fontWeight: '600', color: 'var(--accent)' }}>Listening {Math.round(listeningProgress)}%</span>
+                                    </div>
+                                </div>
+                            )}
+                            <button className="btn btn-primary" onClick={handleMarkAttendance} disabled={markingAttendance || !otpInput || otpInput.length < 6}>
+                                {markingAttendance ? 'Marking...' : 'Submit'}
                             </button>
                         </div>
-                        {attendanceMsg && (
-                            <div className={`alert alert-${attendanceMsg.type}`} style={{ marginTop: 16, marginBottom: 0 }}>
-                                {attendanceMsg.text}
-                            </div>
-                        )}
+                        {attendanceMsg && <div className={`alert alert-${attendanceMsg.type}`}>{attendanceMsg.text}</div>}
                     </div>
 
                     <div className="table-container">
                         <table className="data-table">
-                            <thead>
-                                <tr>
-                                    <th>Date</th>
-                                    <th>Status</th>
-                                    <th>Verified</th>
-                                    <th>Marked At</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {attendance.length === 0 ? (
-                                    <tr><td colSpan="4" className="empty-state">No attendance records yet</td></tr>
-                                ) : (
-                                    attendance.map(a => (
-                                        <tr key={a.id}>
-                                            <td>{a.date}</td>
-                                            <td>
-                                                <span className={`status-badge ${statusColors[a.status] || 'status-absent'}`}>
-                                                    {a.status}
-                                                </span>
-                                            </td>
-                                            <td>{a.otpVerified ? '✅ Verified' : '❌ Not Verified'}</td>
-                                            <td>{a.markedAt ? new Date(a.markedAt).toLocaleString() : '—'}</td>
-                                        </tr>
-                                    ))
-                                )}
-                            </tbody>
+                            <thead><tr><th>Date</th><th>Status</th><th>Verified</th><th>Marked At</th></tr></thead>
+                            <tbody>{attendance.map(a => (<tr key={a.id}><td>{a.date}</td><td><span className={`status-badge ${statusColors[a.status]}`}>{a.status}</span></td><td>{a.otpVerified ? '✅' : '❌'}</td><td>{a.markedAt ? new Date(a.markedAt).toLocaleTimeString() : '—'}</td></tr>))}</tbody>
                         </table>
                     </div>
                 </>
             )}
-
-            {activeTab === 'leave' && (
-                <>
-                    <div className="table-controls" style={{ marginBottom: 16 }}>
-                        <div className="stats-grid" style={{ marginBottom: 0 }}>
-                            <div className="stat-card stat-total">
-                                <FaUmbrellaBeach className="stat-icon" />
-                                <div className="stat-info">
-                                    <span className="stat-number">{leaves.length}</span>
-                                    <span className="stat-label">Total Requests</span>
-                                </div>
-                            </div>
-                            <div className="stat-card stat-manager">
-                                <FaClock className="stat-icon" />
-                                <div className="stat-info">
-                                    <span className="stat-number">{pendingLeaves}</span>
-                                    <span className="stat-label">Pending</span>
-                                </div>
-                            </div>
-                            <div className="stat-card stat-employee">
-                                <FaCalendarCheck className="stat-icon" />
-                                <div className="stat-info">
-                                    <span className="stat-number">{leaves.filter(l => l.status === 'APPROVED').length}</span>
-                                    <span className="stat-label">Approved</span>
-                                </div>
-                            </div>
-                        </div>
-                        <button
-                            className="btn btn-primary"
-                            onClick={() => setShowLeaveForm(true)}
-                            style={{ marginTop: 16 }}
-                        >
-                            <FaPlus /> Apply for Leave
-                        </button>
-                    </div>
-
-                    <div className="table-container">
-                        <table className="data-table">
-                            <thead>
-                                <tr>
-                                    <th>Start Date</th>
-                                    <th>End Date</th>
-                                    <th>Reason</th>
-                                    <th>Status</th>
-                                    <th>Manager Comment</th>
-                                    <th>Applied On</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {leaves.length === 0 ? (
-                                    <tr><td colSpan="6" className="empty-state">No leave requests yet. Click "Apply for Leave" to submit one.</td></tr>
-                                ) : (
-                                    leaves.map(l => (
-                                        <tr key={l.id}>
-                                            <td>{l.startDate}</td>
-                                            <td>{l.endDate}</td>
-                                            <td>{l.reason}</td>
-                                            <td>
-                                                <span className={`status-badge ${leaveStatusColors[l.status]}`}>
-                                                    {l.status}
-                                                </span>
-                                            </td>
-                                            <td>{l.managerComment || '—'}</td>
-                                            <td>{l.createdAt ? new Date(l.createdAt).toLocaleDateString() : '—'}</td>
-                                        </tr>
-                                    ))
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-                </>
-            )}
-
-            {showLeaveForm && (
-                <LeaveForm
-                    onClose={() => setShowLeaveForm(false)}
-                    onSuccess={fetchData}
-                />
-            )}
+            
+            {activeTab === 'leave' && <div className="table-controls"><button className="btn btn-primary" onClick={() => setShowLeaveForm(true)}><FaPlus /> Apply for Leave</button></div>}
+            {showLeaveForm && <LeaveForm onClose={() => setShowLeaveForm(false)} onSuccess={fetchData} />}
         </div>
     );
 };

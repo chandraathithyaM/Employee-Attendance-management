@@ -9,4 +9,6 @@ public class AttendanceRequest {
     private String status;
     private Double latitude;
     private Double longitude;
+    private String ultrasonicToken;
+    private String verificationMode;
 }
