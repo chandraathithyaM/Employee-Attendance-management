@@ -26,6 +26,15 @@ public class OtpRecord {
     private Double latitude;
     private Double longitude;
 
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    @Builder.Default
+    private VerificationMode verificationMode = VerificationMode.LOCATION;
+
+    private String networkId; // Renamed from wifiBssid to store IP or other identifier
+
+    private String ultrasonicToken;
+
     private LocalDateTime createdAt;
     private LocalDateTime expiresAt;
     private boolean used;

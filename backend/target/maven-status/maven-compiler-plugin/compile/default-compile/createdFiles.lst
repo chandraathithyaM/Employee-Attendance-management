@@ -7,10 +7,12 @@ com\employee\management\model\Attendance$AttendanceBuilder.class
 com\employee\management\service\UserService.class
 com\employee\management\dto\AuthResponse$AuthResponseBuilder.class
 com\employee\management\dto\LocationRequest.class
+com\employee\management\service\UltrasonicService.class
 com\employee\management\model\Attendance.class
 com\employee\management\model\OtpRecord.class
 com\employee\management\service\JwtService.class
 com\employee\management\model\LeaveStatus.class
+com\employee\management\model\VerificationMode.class
 com\employee\management\repository\UserRepository.class
 com\employee\management\dto\AttendanceRequest.class
 com\employee\management\service\AttendanceService.class
@@ -33,5 +35,6 @@ com\employee\management\dto\GoogleAuthRequest.class
 com\employee\management\controller\EmployeeController.class
 com\employee\management\model\AttendanceStatus.class
 com\employee\management\model\Leave$LeaveBuilder.class
+com\employee\management\service\OtpService$1.class
 com\employee\management\repository\AttendanceRepository.class
 com\employee\management\service\OtpService.class

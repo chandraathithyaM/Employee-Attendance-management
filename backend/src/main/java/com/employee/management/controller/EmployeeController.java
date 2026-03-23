@@ -10,6 +10,7 @@ import com.employee.management.service.AttendanceService;
 import com.employee.management.service.LeaveService;
 import com.employee.management.service.OtpService;
 import com.employee.management.service.UserService;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -45,13 +46,19 @@ public class EmployeeController {
     }
 
     @PostMapping("/attendance/mark")
-    public ResponseEntity<?> markAttendance(@RequestBody AttendanceRequest request, Authentication authentication) {
+    public ResponseEntity<?> markAttendance(@RequestBody AttendanceRequest request, Authentication authentication, HttpServletRequest httpRequest) {
         String email = (String) authentication.getPrincipal();
         User employee = userService.findByEmail(email).orElseThrow();
 
         Optional<Long> managerIdOpt;
         try {
-            managerIdOpt = otpService.verifyAnyOtp(request.getOtp(), request.getLatitude(), request.getLongitude());
+            managerIdOpt = otpService.verifyAnyOtp(
+                    request.getOtp(),
+                    request.getLatitude(),
+                    request.getLongitude(),
+                    getClientIp(httpRequest), // Auto IP
+                    request.getUltrasonicToken()
+            );
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
@@ -77,5 +84,22 @@ public class EmployeeController {
         String email = (String) authentication.getPrincipal();
         User user = userService.findByEmail(email).orElseThrow();
         return ResponseEntity.ok(leaveService.getLeavesByEmployee(user.getId()));
+    }
+
+    private String getClientIp(HttpServletRequest request) {
+        String ip = request.getHeader("X-Forwarded-For");
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getHeader("Proxy-Client-IP");
+        }
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getHeader("WL-Proxy-Client-IP");
+        }
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getRemoteAddr();
+        }
+        if (ip != null && ip.contains(",")) {
+            ip = ip.split(",")[0].trim();
+        }
+        return ip;
     }
 }

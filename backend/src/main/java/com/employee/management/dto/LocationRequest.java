@@ -6,4 +6,5 @@ import lombok.Data;
 public class LocationRequest {
     private Double latitude;
     private Double longitude;
+    private String verificationMode;
 }

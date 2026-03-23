@@ -251,7 +251,7 @@ const ManagerDashboard = () => {
                         <table className="data-table">
                             <thead>
                                 <tr>
-                                    <th>Employee ID</th><th>Start</th><th>End</th>
+                                    <th>Employee Name</th><th>Start</th><th>End</th>
                                     <th>Reason</th><th>Status</th><th>Applied On</th><th>Actions</th>
                                 </tr>
                             </thead>
@@ -261,7 +261,7 @@ const ManagerDashboard = () => {
                                 ) : (
                                     leaves.map(l => (
                                         <tr key={l.id}>
-                                            <td>#{l.employeeId}</td>
+                                            <td>{l.employeeName || `Employee #${l.employeeId}`}</td>
                                             <td>{l.startDate}</td>
                                             <td>{l.endDate}</td>
                                             <td style={{ maxWidth: 200, whiteSpace: 'normal', wordBreak: 'break-word' }}>{l.reason}</td>
