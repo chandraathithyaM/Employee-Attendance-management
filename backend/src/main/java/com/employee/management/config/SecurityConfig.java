@@ -3,6 +3,7 @@ package com.employee.management.config;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -21,22 +22,28 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-            .csrf(csrf -> csrf.disable())
-            .cors(cors -> {})
-            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/api/auth/**").permitAll()
-                .requestMatchers("/h2-console/**").permitAll()
-                // ADMIN can access all endpoints
-                .requestMatchers("/api/admin/**").hasAnyAuthority("ADMIN")
-                // MANAGER and ADMIN can both access manager endpoints
-                .requestMatchers("/api/manager/**").hasAnyAuthority("MANAGER", "ADMIN")
-                // EMPLOYEE, MANAGER, and ADMIN can access employee endpoints
-                .requestMatchers("/api/employee/**").hasAnyAuthority("EMPLOYEE", "MANAGER", "ADMIN")
-                .anyRequest().authenticated()
-            )
-            .headers(headers -> headers.frameOptions(frame -> frame.disable()))
-            .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+                .csrf(csrf -> csrf.disable())
+
+                // ✅ IMPORTANT: enable CORS properly
+                .cors(Customizer.withDefaults())
+
+                .sessionManagement(session ->
+                        session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+                )
+
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/api/auth/**").permitAll()
+                        .requestMatchers("/auth/**").permitAll() // ✅ ADD THIS (for your current API)
+                        .requestMatchers("/h2-console/**").permitAll()
+                        .requestMatchers("/api/admin/**").hasAnyAuthority("ADMIN")
+                        .requestMatchers("/api/manager/**").hasAnyAuthority("MANAGER", "ADMIN")
+                        .requestMatchers("/api/employee/**").hasAnyAuthority("EMPLOYEE", "MANAGER", "ADMIN")
+                        .anyRequest().authenticated()
+                )
+
+                .headers(headers -> headers.frameOptions(frame -> frame.disable()))
+
+                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
