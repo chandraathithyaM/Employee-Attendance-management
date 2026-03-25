@@ -1,47 +1,44 @@
-package com.employee.management.config;
+@Override
+protected void doFilterInternal(HttpServletRequest request,
+                               HttpServletResponse response,
+                               FilterChain filterChain)
+        throws ServletException, IOException {
 
-import com.employee.management.service.JwtService;
-import jakarta.servlet.FilterChain;
-import jakarta.servlet.ServletException;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
-import lombok.RequiredArgsConstructor;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.stereotype.Component;
-import org.springframework.web.filter.OncePerRequestFilter;
+    String path = request.getServletPath();
 
-import java.io.IOException;
-import java.util.List;
+    // ✅ VERY IMPORTANT: skip auth endpoints
+    if (path.startsWith("/api/auth")) {
+        filterChain.doFilter(request, response);
+        return;
+    }
 
-@Component
-@RequiredArgsConstructor
-public class JwtAuthFilter extends OncePerRequestFilter {
+    String authHeader = request.getHeader("Authorization");
 
-    private final JwtService jwtService;
+    if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+        filterChain.doFilter(request, response);
+        return;
+    }
 
-    @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
-                                    FilterChain filterChain) throws ServletException, IOException {
-        String authHeader = request.getHeader("Authorization");
-
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            filterChain.doFilter(request, response);
-            return;
-        }
-
+    try {
         String token = authHeader.substring(7);
 
         if (jwtService.isTokenValid(token)) {
             String email = jwtService.extractEmail(token);
             String role = jwtService.extractRole(token);
 
-            UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
-                    email, null, List.of(new SimpleGrantedAuthority(role)));
+            UsernamePasswordAuthenticationToken authToken =
+                    new UsernamePasswordAuthenticationToken(
+                            email,
+                            null,
+                            List.of(new SimpleGrantedAuthority(role))
+                    );
+
             SecurityContextHolder.getContext().setAuthentication(authToken);
         }
 
-        filterChain.doFilter(request, response);
+    } catch (Exception e) {
+        System.out.println("JWT error: " + e.getMessage());
     }
+
+    filterChain.doFilter(request, response);
 }
